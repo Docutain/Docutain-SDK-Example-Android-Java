@@ -4,12 +4,12 @@ plugins {
 
 android {
     namespace 'de.docutain.sdk.docutain_sdk_example_android_java'
-    compileSdk 33
+    compileSdk 34
 
     defaultConfig {
         applicationId "de.docutain.sdk.sample"
         minSdk 21
-        targetSdk 33
+        targetSdk 34
         versionCode 1
         versionName "1.0"
 
@@ -29,8 +29,8 @@ android {
 }
 
 dependencies {
-    //Import the Docutain SDK
-    def docutainSdkVersion = '1.5.1.8'
+    //Import the Docutain SDK, always use the latest available version
+    def docutainSdkVersion = '1.+'
     //For Document Scanner components
     implementation("de.docutain:Docutain-SDK-UI:$docutainSdkVersion")
     //For Data Extraction and OCR (Text Recognition) components
@@ -38,6 +38,7 @@ dependencies {
 
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.8.0'
+    implementation 'com.github.Dhaval2404:ColorPicker:2.3'
    
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     testImplementation 'junit:junit:4.13.2'

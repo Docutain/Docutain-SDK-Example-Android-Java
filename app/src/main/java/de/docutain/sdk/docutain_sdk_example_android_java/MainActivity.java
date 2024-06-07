@@ -8,7 +8,6 @@ import android.os.Bundle;
 import android.util.Log;
 
 import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.PickVisualMediaRequest;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
@@ -19,25 +18,34 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import java.io.File;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import de.docutain.sdk.Document;
 import de.docutain.sdk.DocutainSDK;
+import de.docutain.sdk.Logger;
+import de.docutain.sdk.dataextraction.AnalyzeConfiguration;
 import de.docutain.sdk.dataextraction.DocumentDataReader;
+import de.docutain.sdk.docutain_sdk_example_android_java.settings.SettingsActivity;
+import de.docutain.sdk.docutain_sdk_example_android_java.settings.SettingsMultiItems;
+import de.docutain.sdk.docutain_sdk_example_android_java.settings.SettingsSharedPreferences;
 import de.docutain.sdk.ui.DocumentScannerConfiguration;
+import de.docutain.sdk.ui.DocutainColor;
 import de.docutain.sdk.ui.ScanResult;
+import de.docutain.sdk.ui.Source;
 
 public class MainActivity extends AppCompatActivity {
 
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
+    private SettingsSharedPreferences settingsSharedPreferences;
     private Future<File> pdfFuture;
     private final String logTag = "DocutainSDK";
-
     private ListAdapter.ItemType selectedOption = ListAdapter.ItemType.NONE;
 
+    //declare an ActivityResultLauncher which starts the document scanner and
+    //returns once the user finished scanning or canceled the scan process
+    //see [https://docs.docutain.com/docs/Android/docScan] for more information
     private final ActivityResultLauncher<DocumentScannerConfiguration> documentScanResult = registerForActivityResult(new ScanResult(),
             result -> {
                 if (!result) {
@@ -63,81 +71,76 @@ public class MainActivity extends AppCompatActivity {
             }
     );
 
-    //declare an image picker activity launcher in single-select mode which is used to generate a pdf from the selected image
-    private final ActivityResultLauncher<PickVisualMediaRequest> pickImageForPDFGenerating =
-            registerForActivityResult(new ActivityResultContracts.PickVisualMedia(), uri -> {
-                // Callback is invoked after the user selects a media item or closes the
-                // photo picker.
-                if (uri != null) {
-                    generatePDF(uri);
-                } else {
-                    Log.i(logTag, "Canceled image import");
-                }
-            });
 
-    //declare an image picker activity launcher in single-select mode which is used to extract data from the selected image
-    private final ActivityResultLauncher<PickVisualMediaRequest> pickImageForDataExtraction =
-            registerForActivityResult(new ActivityResultContracts.PickVisualMedia(), uri -> {
-                // Callback is invoked after the user selects a media item or closes the
-                // photo picker.
-                if (uri != null) {
-                    openDataResultActivity(uri);
-                } else {
-                    Log.i(logTag, "Canceled image import");
-                }
-            });
-
-    //declare an image picker activity launcher in single-select mode which is used to recognize text from the selected image
-    private final ActivityResultLauncher<PickVisualMediaRequest> pickImageForTextRecognition =
-            registerForActivityResult(new ActivityResultContracts.PickVisualMedia(), uri -> {
-                // Callback is invoked after the user selects a media item or closes the
-                // photo picker.
-                if (uri != null) {
-                    openTextResultActivity(uri);
-                } else {
-                    Log.i(logTag, "Canceled image import");
-                }
-            });
-
-
-    // Declare a PDF picker activity launcher for recognizing text from the selected PDF
-    private final ActivityResultLauncher<String> pickPDFForTextRecognition = registerForActivityResult(
+    //declare a PDF picker activity launcher for importing PDF documents
+    private final ActivityResultLauncher<String> pickPDF = registerForActivityResult(
             new ActivityResultContracts.GetContent(),
             uri -> {
                 if (uri != null) {
-                    openTextResultActivity(uri);
+                    // Proceed depending on the previously selected option
+                    switch (selectedOption) {
+                        case PDF_GENERATING:
+                            generatePDF(uri);
+                            break;
+                        case DATA_EXTRACTION:
+                            openDataResultActivity(uri);
+                            break;
+                        case TEXT_RECOGNITION:
+                            openTextResultActivity(uri);
+                            break;
+                        default:
+                            Log.i(logTag, "Select an input option first");
+                            break;
+                    }
                 } else {
                     Log.i(logTag, "canceled PDF import");
                 }
             }
     );
 
-    // Declare a PDF picker activity launcher for extracting data from the selected PDF
-    private final ActivityResultLauncher<String> pickPDFForDataExtraction = registerForActivityResult(
-            new ActivityResultContracts.GetContent(),
-            uri -> {
-                if (uri != null) {
-                    openDataResultActivity(uri);
-                } else {
-                    Log.i(logTag, "canceled PDF import");
-                }
-            }
-    );
+    //A valid license key is required, you can generate one on our website https://sdk.docutain.com/TrialLicense?Source=786945
+    private final String licenseKey = "YOUR_LICENSE_KEY_HERE";
 
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
 
-        if (App.licenseKeyMissing) {
-            // The Docutain SDK needs to be initialized prior to using any functionality of it.
-            // A valid license key is required.
-            // Visit https://sdk.docutain.com/TrialLicense?Source=786945 to get a trial license key for free
-            // Once you got a license, set it in App.java
-            showLicenseEmptyInfo();
+        //the Docutain SDK needs to be initialized prior to using any functionality of it
+        //a valid license key is required, you can generate one on our website https://sdk.docutain.com/TrialLicense?Source=786945
+        if(!DocutainSDK.initSDK(getApplication(), licenseKey)){
+            //init of Docutain SDK failed, get the last error message
+            Log.e(logTag,"Initialization of the Docutain SDK failed: " + DocutainSDK.getLastError());
+            //your logic to deactivate access to SDK functionality
+            if(licenseKey == "YOUR_LICENSE_KEY_HERE"){
+                showLicenseEmptyInfo();
+            }else{
+                showLicenseErrorInfo();
+            }
             return;
         }
+
+        //If you want to use text detection (OCR) and/or data extraction features, you need to set the AnalyzeConfiguration
+        //in order to start all the necessary processes
+        AnalyzeConfiguration analyzeConfig = new AnalyzeConfiguration();
+        analyzeConfig.setReadBIC(true);
+        analyzeConfig.setReadPaymentState(true);
+        if(!DocumentDataReader.setAnalyzeConfiguration(analyzeConfig)){
+            Log.e(logTag,"Setting AnalyzeConfiguration failed: " + DocutainSDK.getLastError());
+        }
+
+        //Depending on your needs, you can set the Logger's level
+        Logger.setLogLevel(Logger.Level.VERBOSE);
+
+        //Depending on the log level that you have set, some temporary files get written on the filesystem
+        //You can delete all temporary files by using the following method
+        DocutainSDK.deleteTempFiles(true);
+
+        settingsSharedPreferences = new SettingsSharedPreferences(this);
+        if(settingsSharedPreferences.isEmpty())
+            settingsSharedPreferences.defaultSettings();
+
+        setContentView(R.layout.activity_main);
 
         RecyclerView recyclerView = findViewById(R.id.recycler_view);
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
@@ -145,7 +148,7 @@ public class MainActivity extends AppCompatActivity {
             switch (item.getType()) {
                 case DOCUMENT_SCAN:
                     selectedOption = ListAdapter.ItemType.DOCUMENT_SCAN;
-                    startScan();
+                    startScan(false);
                     break;
                 case DATA_EXTRACTION:
                     selectedOption = ListAdapter.ItemType.DATA_EXTRACTION;
@@ -158,6 +161,10 @@ public class MainActivity extends AppCompatActivity {
                 case PDF_GENERATING:
                     selectedOption = ListAdapter.ItemType.PDF_GENERATING;
                     startPDFGenerating();
+                    break;
+                case SETTINGS:
+                    selectedOption = ListAdapter.ItemType.SETTINGS;
+                    startActivity(new Intent(this, SettingsActivity.class));
                     break;
                 default:
                     selectedOption = ListAdapter.ItemType.NONE;
@@ -173,60 +180,76 @@ public class MainActivity extends AppCompatActivity {
         recyclerView.addItemDecoration(dividerItemDecoration);
     }
 
-    private void startScan() {
-        // Define a DocumentScannerConfiguration to alter the scan process and define a custom theme to match your branding
+    private void startScan(Boolean imageImport) {
+        //There are a lot of settings to configure the scanner to match your specific needs
+        //Check out the documentation to learn more https://docs.docutain.com/docs/Android/docScan#change-default-scan-behaviour
         DocumentScannerConfiguration scanConfig = new DocumentScannerConfiguration();
-        scanConfig.setAllowCaptureModeSetting(true); // Defaults to false
-        scanConfig.getPageEditConfig().setAllowPageFilter(true); // Defaults to true
-        scanConfig.getPageEditConfig().setAllowPageRotation(true); // Defaults to true
+
+        if(imageImport){
+            scanConfig.setSource(Source.GALLERY_MULTIPLE);
+        }
+
+        //In this sample app we provide a settings page which the user can use to alter the scan settings
+        //The settings are stored in and read from SharedPreferences
+        //This is supposed to be just an example, you do not need to implement it in that exact way
+        //If you do not want to provide your users the possibility to alter the settings themselves at all
+        //You can just set the settings according to the apps needs
+
+        //set scan settings
+        scanConfig.setAllowCaptureModeSetting(settingsSharedPreferences.getScanItem(SettingsSharedPreferences.ScanSettings.AllowCaptureModeSetting).checkValue);
+        scanConfig.setAutoCapture(settingsSharedPreferences.getScanItem(SettingsSharedPreferences.ScanSettings.AutoCapture).checkValue);
+        scanConfig.setAutoCrop(settingsSharedPreferences.getScanItem(SettingsSharedPreferences.ScanSettings.AutoCrop).checkValue);
+        scanConfig.setMultiPage(settingsSharedPreferences.getScanItem(SettingsSharedPreferences.ScanSettings.MultiPage).checkValue);
+        scanConfig.setPreCaptureFocus(settingsSharedPreferences.getScanItem(SettingsSharedPreferences.ScanSettings.PreCaptureFocus).checkValue);
+        scanConfig.setDefaultScanFilter(settingsSharedPreferences.getScanFilterItem(SettingsSharedPreferences.ScanSettings.DefaultScanFilter).scanValue);
+
+        //set edit settings
+        scanConfig.getPageEditConfig()
+                .setAllowPageFilter(settingsSharedPreferences.getEditItem(SettingsSharedPreferences.EditSettings.AllowPageFilter).checkValue);
+        scanConfig.getPageEditConfig()
+                .setAllowPageRotation(settingsSharedPreferences.getEditItem(SettingsSharedPreferences.EditSettings.AllowPageRotation).checkValue);
+        scanConfig.getPageEditConfig()
+                .setAllowPageArrangement(settingsSharedPreferences.getEditItem(SettingsSharedPreferences.EditSettings.AllowPageArrangement).checkValue);
+        scanConfig.getPageEditConfig()
+                .setAllowPageCropping(settingsSharedPreferences.getEditItem(SettingsSharedPreferences.EditSettings.AllowPageCropping).checkValue);
+        scanConfig.getPageEditConfig()
+                .setPageArrangementShowDeleteButton(settingsSharedPreferences.getEditItem(SettingsSharedPreferences.EditSettings.PageArrangementShowDeleteButton).checkValue);
+        scanConfig.getPageEditConfig()
+                .setPageArrangementShowPageNumber(settingsSharedPreferences.getEditItem(SettingsSharedPreferences.EditSettings.PageArrangementShowPageNumber).checkValue);
+
+        //set color settings
+        SettingsMultiItems.ColorItem colorPrimary = settingsSharedPreferences.getColorItem(SettingsSharedPreferences.ColorItem.ColorPrimary);
+        scanConfig.getColorConfig().setColorPrimary(new DocutainColor(colorPrimary.lightCircle, colorPrimary.darkCircle));
+        SettingsMultiItems.ColorItem colorSecondary = settingsSharedPreferences.getColorItem(SettingsSharedPreferences.ColorItem.ColorSecondary);
+        scanConfig.getColorConfig().setColorSecondary(new DocutainColor(colorSecondary.lightCircle, colorSecondary.darkCircle));
+        SettingsMultiItems.ColorItem colorOnSecondary = settingsSharedPreferences.getColorItem(SettingsSharedPreferences.ColorItem.ColorOnSecondary);
+        scanConfig.getColorConfig().setColorOnSecondary(new DocutainColor(colorOnSecondary.lightCircle, colorOnSecondary.darkCircle));
+        SettingsMultiItems.ColorItem colorScanButtonsLayoutBackground = settingsSharedPreferences.getColorItem(SettingsSharedPreferences.ColorItem.ColorScanButtonsLayoutBackground);
+        scanConfig.getColorConfig().setColorScanButtonsLayoutBackground(new DocutainColor(colorScanButtonsLayoutBackground.lightCircle, colorScanButtonsLayoutBackground.darkCircle));
+        SettingsMultiItems.ColorItem colorScanButtonsForeground = settingsSharedPreferences.getColorItem(SettingsSharedPreferences.ColorItem.ColorScanButtonsForeground);
+        scanConfig.getColorConfig().setColorScanButtonsForeground(new DocutainColor(colorScanButtonsForeground.lightCircle, colorScanButtonsForeground.darkCircle));
+        SettingsMultiItems.ColorItem colorScanPolygon = settingsSharedPreferences.getColorItem(SettingsSharedPreferences.ColorItem.ColorScanPolygon);
+        scanConfig.getColorConfig().setColorScanPolygon(new DocutainColor(colorScanPolygon.lightCircle, colorScanPolygon.darkCircle));
+        SettingsMultiItems.ColorItem colorBottomBarBackground = settingsSharedPreferences.getColorItem(SettingsSharedPreferences.ColorItem.ColorBottomBarBackground);
+        scanConfig.getColorConfig().setColorBottomBarBackground(new DocutainColor(colorBottomBarBackground.lightCircle, colorBottomBarBackground.darkCircle));
+        SettingsMultiItems.ColorItem colorBottomBarForeground = settingsSharedPreferences.getColorItem(SettingsSharedPreferences.ColorItem.ColorBottomBarForeground);
+        scanConfig.getColorConfig().setColorBottomBarForeground(new DocutainColor(colorBottomBarForeground.lightCircle, colorBottomBarForeground.darkCircle));
+        SettingsMultiItems.ColorItem colorTopBarBackground = settingsSharedPreferences.getColorItem(SettingsSharedPreferences.ColorItem.ColorTopBarBackground);
+        scanConfig.getColorConfig().setColorTopBarBackground(new DocutainColor(colorTopBarBackground.lightCircle, colorTopBarBackground.darkCircle));
+        SettingsMultiItems.ColorItem colorTopBarForeground = settingsSharedPreferences.getColorItem(SettingsSharedPreferences.ColorItem.ColorTopBarForeground);
+        scanConfig.getColorConfig().setColorTopBarForeground(new DocutainColor(colorTopBarForeground.lightCircle, colorTopBarForeground.darkCircle));
+
         // Alter the onboarding image source if you like
-        // scanConfig.setOnboardingImageSource = ...
+        // scanConfig.setOnboardingImageSource
 
         // Detailed information about theming possibilities can be found here [https://docs.docutain.com/docs/Android/theming]
-        scanConfig.setTheme(R.style.Theme_DocutainSDK);
+        //scanConfig.setTheme
+
         documentScanResult.launch(scanConfig);
     }
 
     private void startPDFImport() {
-        switch (selectedOption) {
-            case PDF_GENERATING:
-                Log.i(logTag, "Generating a PDF from a file which is already a PDF makes no sense, please scan a document or import an image.");
-                break;
-            case DATA_EXTRACTION:
-                pickPDFForDataExtraction.launch("application/pdf");
-                break;
-            case TEXT_RECOGNITION:
-                pickPDFForTextRecognition.launch("application/pdf");
-                break;
-            default:
-                Log.i(logTag, "Select an input option first");
-                break;
-        }
-    }
-
-    private void startImageImport() {
-        switch (selectedOption) {
-            case PDF_GENERATING:
-                // Launch the photo picker and let the user choose only images.
-                pickImageForPDFGenerating.launch(new PickVisualMediaRequest.Builder()
-                        .setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly.INSTANCE)
-                        .build());
-
-                break;
-            case DATA_EXTRACTION:
-                pickImageForDataExtraction.launch(new PickVisualMediaRequest.Builder()
-                        .setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly.INSTANCE)
-                        .build());
-                break;
-            case TEXT_RECOGNITION:
-                pickImageForTextRecognition.launch(new PickVisualMediaRequest.Builder()
-                        .setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly.INSTANCE)
-                        .build());
-                break;
-            default:
-                Log.i(logTag, "Select an input option first");
-                break;
-        }
+        pickPDF.launch("application/pdf");
     }
 
     private void startDataExtraction() {
@@ -252,17 +275,16 @@ public class MainActivity extends AppCompatActivity {
                         }, (dialog, which) -> {
                             switch (which) {
                                 case 0:
-                                    startScan();
+                                    startScan(false);
                                     break;
                                 case 1:
                                     startPDFImport();
                                     break;
                                 case 2:
-                                    startImageImport();
+                                    startScan(true);
                                     break;
                             }
                         });
-
         builder.create().show();
     }
 
@@ -331,20 +353,32 @@ public class MainActivity extends AppCompatActivity {
 
     @SuppressLint("QueryPermissionsNeeded")
     private void showLicenseEmptyInfo() {
-        new MaterialAlertDialogBuilder(this)
-                .setTitle("License empty")
-                .setMessage("A valid license key is required. Please visit our website in order to create a license key for free.")
-                .setNegativeButton("Cancel", (dialog, which) -> {
-                    // Handle cancel button click
-                })
+        new MaterialAlertDialogBuilder(this).setTitle("License empty")
+                .setMessage("A valid license key is required. Please click \"GET LICENSE\" in order to create a free trial license key on our website.")
                 .setPositiveButton("Get License", (dialog, which) -> {
                     Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://sdk.docutain.com/TrialLicense?Source=786945"));
-                    try {
+                    startActivity(intent);
+                    finish();
+                }).setCancelable(false).show();
+    }
+
+    private void showLicenseErrorInfo() {
+        new MaterialAlertDialogBuilder(this).setTitle("License error")
+                .setMessage("A valid license key is required. Please contact our support to get an extended trial license.")
+                .setPositiveButton("Contact Support", (dialog, which) -> {
+                    Intent intent = new Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:support.sdk@Docutain.com"));
+                    intent.putExtra(Intent.EXTRA_SUBJECT, "Trial License Error");
+                    intent.putExtra(Intent.EXTRA_TEXT, "Please keep your following trial license key in this e-mail: " + licenseKey);
+                    if (intent.resolveActivity(getPackageManager()) != null) {
                         startActivity(intent);
-                    } catch(ActivityNotFoundException ex){
-                        Log.e(logTag, "No Browser App available, please contact us manually via sdk@Docutain.com");
+                        finish();
+                    } else {
+                        Log.e(
+                            logTag,
+                            "No Mail App available, please contact us manually via sdk@Docutain.com"
+                        );
                     }
-                }).show();
+                }).setCancelable(false).show();
     }
 
     @Override

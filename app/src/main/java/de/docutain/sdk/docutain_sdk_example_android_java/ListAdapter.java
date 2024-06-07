@@ -16,14 +16,16 @@ public class ListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         DOCUMENT_SCAN,
         DATA_EXTRACTION,
         TEXT_RECOGNITION,
-        PDF_GENERATING
+        PDF_GENERATING,
+        SETTINGS
     }
 
     private final ListItem[] items = {
             new ListItem(R.string.title_document_scan, R.string.subtitle_document_scan, R.drawable.document_scanner, ItemType.DOCUMENT_SCAN),
             new ListItem(R.string.title_data_extraction, R.string.subtitle_data_extraction, R.drawable.data_extraction, ItemType.DATA_EXTRACTION),
             new ListItem(R.string.title_text_recognition, R.string.subtitle_text_recognition, R.drawable.ocr, ItemType.TEXT_RECOGNITION),
-            new ListItem(R.string.title_PDF_generating, R.string.subtitle_PDF_generating, R.drawable.pdf, ItemType.PDF_GENERATING)
+            new ListItem(R.string.title_PDF_generating, R.string.subtitle_PDF_generating, R.drawable.pdf, ItemType.PDF_GENERATING),
+            new ListItem(R.string.title_settings, R.string.subtitle_settings, R.drawable.settings, ItemType.SETTINGS)
     };
 
     private final OnItemClickedListener onItemClickedListener;
